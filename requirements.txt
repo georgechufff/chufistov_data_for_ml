@@ -4,3 +4,6 @@ kaggle==2.0.0
 kaggle-environments==1.27.0
 kagglehub[pandas-datasets]==1.0.0
 pandas==2.3.3
+openai
+matplotlib
+seaborn
