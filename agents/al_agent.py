@@ -475,10 +475,7 @@ class ActiveLearningAgent:
             print(f"\n📚 Размеченных документов: {len(current_labeled)}")
             print(f"📦 Неразмеченных документов: {len(current_pool)}")
             
-            # Обучаем модель на текущих размеченных данных
-            self.fit(current_labeled, text_column, label_column)
-            
-            # Оцениваем на тесте
+            # Оцениваем на тесте (evaluate вызывает fit внутри)
             metrics = self.evaluate(current_labeled, test_df, text_column, label_column)
             
             # Сохраняем метрики
@@ -521,9 +518,9 @@ class ActiveLearningAgent:
             print(f"📊 Текущий размер размеченного датасета: {len(current_labeled)}")
             
             # Показываем распределение классов после добавления
-            if 'label' in current_labeled.columns:
+            if label_column in current_labeled.columns:
                 print(f"\n📊 Распределение классов:")
-                for label, count in current_labeled['label'].value_counts().items():
+                for label, count in current_labeled[label_column].value_counts().items():
                     print(f"  • {label}: {count} ({count/len(current_labeled)*100:.1f}%)")
         
         self.training_history = history
@@ -635,51 +632,31 @@ class ActiveLearningAgent:
         print("="*80)
         
         results = {}
-        
+
         for strategy in strategies:
             print(f"\n{'='*60}")
             print(f"📊 ТЕСТИРОВАНИЕ СТРАТЕГИИ: {strategy.upper()}")
             print(f"{'='*60}")
-            
-            # Создаем копии данных для каждой стратегии
-            current_labeled = labeled_df.copy()
-            current_pool = pool_df.copy()
-            
-            history = []
-            
-            for iteration in range(1, n_iterations + 1):
-                # Обучаем модель
-                self.fit(current_labeled, text_column, label_column)
-                
-                # Оцениваем
-                metrics = self.evaluate(current_labeled, test_df, text_column, label_column)
-                
-                history.append(TrainingMetrics(
-                    iteration=iteration,
-                    n_labeled=len(current_labeled),
-                    accuracy=metrics['accuracy'],
-                    f1=metrics['f1']
-                ))
-                
-                if iteration == n_iterations:
-                    break
-                
-                # Отбираем документы
-                selected_indices = self.query(
-                    current_pool,
-                    strategy=strategy,
-                    batch_size=batch_size,
-                    text_column=text_column
-                )
-                
-                if not selected_indices:
-                    break
-                
-                # Добавляем в размеченный датасет
-                new_samples = current_pool.loc[selected_indices].copy()
-                current_labeled = pd.concat([current_labeled, new_samples], ignore_index=True)
-                current_pool = current_pool.drop(selected_indices)
-            
+
+            # Создаем свежий агент для каждой стратегии, чтобы состояние не утекало
+            agent = ActiveLearningAgent(
+                model_type=self.model_type,
+                vectorizer=self.vectorizer_type,
+                random_state=self.random_state,
+                **self.kwargs
+            )
+
+            history = agent.run_cycle(
+                labeled_df=labeled_df,
+                pool_df=pool_df,
+                test_df=test_df,
+                strategy=strategy,
+                n_iterations=n_iterations,
+                batch_size=batch_size,
+                text_column=text_column,
+                label_column=label_column
+            )
+
             results[strategy] = history
         
         # Визуализируем сравнение
