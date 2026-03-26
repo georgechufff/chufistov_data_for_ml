@@ -1,4 +1,4 @@
-from agents import DataCollectionAgent, DataQualityAgent
+from agents import AnnotationAgent, DataCollectionAgent, DataQualityAgent
 
 from dotenv import load_dotenv
 
@@ -7,8 +7,8 @@ load_dotenv()
 
 if __name__ == "__main__":
 
-    collection_agent = DataCollectionAgent()
-    quality_agent = DataQualityAgent(use_llm=True)
+    # collection_agent = DataCollectionAgent()
+    # quality_agent = DataQualityAgent(use_llm=True)
 
     # df = agent.run(
     #     sources=[
@@ -27,5 +27,8 @@ if __name__ == "__main__":
     
     # df.to_csv('corpus.csv', index=False)
     
-    quality_agent.run()
+    # quality_agent.run()
+    
+    annotation_agent = AnnotationAgent()
+    annotation_agent.run()
     

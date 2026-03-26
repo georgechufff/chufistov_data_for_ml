@@ -6,7 +6,7 @@
 ## Структура репозитория
 - `agents/`
   - Содержит скрипт `data_collection_agent.py` для сбора данных из различных источников.
-  - Содержит скрипт `data_collection_agent.py` для проверки качества данных.
+  - Содержит скрипт `data_quality_agent.py` для проверки качества данных.
 - `data/`
 - `notebooks/`
   - `eda.ipynb`

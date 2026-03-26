@@ -16,8 +16,12 @@ import json
 
 warnings.filterwarnings('ignore')
 
-# Для бонусной части с LLM (OpenAI)
-from openai import OpenAI
+# Для бонусной части с LLM (Claude API)
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
 
 @dataclass
 class QualityReport:
@@ -93,10 +97,10 @@ class DataQualityAgent:
     Специализирован на обработке текстовых полей.
     """
     
-    def __init__(self, random_state: int = 42, use_llm: bool = False, api_key: str = None, model: str = "gpt-3.5-turbo"):
+    def __init__(self, random_state: int = 42, use_llm: bool = False, api_key: str = None, model: str = "claude-opus-4-6"):
         """
         Инициализация агента
-        
+
         Parameters:
         -----------
         random_state : int
@@ -104,9 +108,9 @@ class DataQualityAgent:
         use_llm : bool
             Использовать ли LLM для рекомендаций
         api_key : str
-            API ключ OpenAI
+            API ключ Anthropic (Claude)
         model : str
-            Модель OpenAI для использования
+            Модель Claude для использования
         """
         self.random_state = random_state
         np.random.seed(random_state)
@@ -114,20 +118,21 @@ class DataQualityAgent:
         self.fix_history = []
         self.use_llm = use_llm
         self.model = model
-        
-        if use_llm and api_key:
-            self.llm_client = OpenAI(api_key=api_key)
-            print("✅ OpenAI клиент инициализирован")
-        elif use_llm:
-            # Пробуем взять из переменной окружения
-            api_key = os.getenv("OPENAI_API_KEY")
-            if api_key:
-                self.llm_client = OpenAI(api_key=api_key)
+
+        if use_llm:
+            if not ANTHROPIC_AVAILABLE:
+                self.use_llm = False
+                print("⚠️  LLM отключен: библиотека anthropic не установлена. Выполните: pip install anthropic")
+                return
+
+            resolved_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+            if resolved_key:
+                self.llm_client = anthropic.Anthropic(api_key=resolved_key)
                 self.use_llm = True
-                print("✅ OpenAI клиент инициализирован из переменной окружения")
+                print("✅ Claude (Anthropic) клиент инициализирован")
             else:
                 self.use_llm = False
-                print("⚠️  LLM отключен: не предоставлен API ключ")
+                print("⚠️  LLM отключен: не предоставлен ANTHROPIC_API_KEY")
     
     def load_data_from_folder(self, folder_path: str, file_pattern: str = "*.csv") -> pd.DataFrame:
         """
@@ -670,146 +675,125 @@ class DataQualityAgent:
     
     def get_llm_recommendation(self, task_description: str) -> str:
         """
-        Использует OpenAI API для получения рекомендаций по очистке текстовых данных.
-        
+        Использует Claude API для получения рекомендаций по очистке текстовых данных.
+
         Parameters:
         -----------
         task_description : str
             Описание ML-задачи
-            
+
         Returns:
         --------
         str : Рекомендация от LLM
         """
         if not self.use_llm:
-            return "❌ LLM отключен. Укажите use_llm=True и API ключ при инициализации агента."
-        
+            return "❌ LLM отключен. Укажите use_llm=True и ANTHROPIC_API_KEY при инициализации агента."
+
         if not self.quality_report:
             return "❌ Отчет о качестве не создан. Сначала выполните detect_issues()."
-        
+
         try:
-            # Формируем промпт для OpenAI
-            system_prompt = """Ты - эксперт по качеству текстовых данных (Text Data Quality Expert). 
-Твоя задача - анализировать отчеты о качестве текстовых данных и давать рекомендации по их очистке.
-Ты должен учитывать специфику NLP/ML-задачи и предлагать оптимальные стратегии."""
-
-            user_prompt = f"""Проанализируй отчет о качестве текстовых данных и описание NLP-задачи, затем порекомендуй оптимальную стратегию очистки.
-
-ОТЧЕТ О КАЧЕСТВЕ ТЕКСТОВЫХ ДАННЫХ:
-{self.quality_report}
-
-ОПИСАНИЕ NLP-ЗАДАЧИ:
-{task_description}
-
-ДОСТУПНЫЕ СТРАТЕГИИ:
-- missing: 'fill_empty' (заполнить пустой строкой), 'fill_placeholder' ([MISSING]), 'fill_mode' (мода), 'drop' (удалить)
-- duplicates: 'drop' (удалить все дубликаты), 'keep_first' (оставить первый), 'keep_last' (оставить последний)
-- outliers: 'truncate' (обрезать длинные тексты), 'remove' (удалить аномалии), 'flag' (создать флаг аномалии)
-- text_cleaning: 'basic' (удалить лишние пробелы), 'advanced' (нормализация, удаление URL/email, приведение к нижнему регистру)
-
-ТВОЯ ЗАДАЧА:
-1. Дай конкретные рекомендации по очистке текстовых данных
-2. Объясни, почему эта стратегия лучше всего подходит для данной задачи
-3. Укажи возможные риски выбранного подхода
-4. Предложи альтернативный вариант
-
-Формат ответа: 
-- Будь конкретным и практичным
-- Используй маркированные списки для читаемости
-- Ограничь ответ 400 словами"""
-
-            # Запрос к OpenAI
-                        # Запрос к OpenAI
-            response = self.llm_client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3,
-                max_tokens=600
+            system_prompt = (
+                "Ты — эксперт по качеству текстовых данных (Text Data Quality Expert). "
+                "Твоя задача — анализировать отчёты о качестве текстовых данных и давать рекомендации по их очистке. "
+                "Учитывай специфику NLP/ML-задачи и предлагай оптимальные стратегии."
             )
-            
-            recommendation = response.choices[0].message.content
-            
+
+            user_prompt = (
+                f"Проанализируй отчёт о качестве текстовых данных и описание NLP-задачи, "
+                f"затем порекомендуй оптимальную стратегию очистки.\n\n"
+                f"ОТЧЁТ О КАЧЕСТВЕ ТЕКСТОВЫХ ДАННЫХ:\n{self.quality_report}\n\n"
+                f"ОПИСАНИЕ NLP-ЗАДАЧИ:\n{task_description}\n\n"
+                f"ДОСТУПНЫЕ СТРАТЕГИИ:\n"
+                f"- missing: 'fill_empty', 'fill_placeholder' ([MISSING]), 'fill_mode' (мода), 'drop'\n"
+                f"- duplicates: 'drop', 'keep_first', 'keep_last'\n"
+                f"- outliers: 'truncate' (обрезать длинные тексты), 'remove' (удалить аномалии), 'flag' (флаг)\n"
+                f"- text_cleaning: 'basic' (пробелы), 'advanced' (нормализация, URL, email, регистр)\n\n"
+                f"ТВОЯ ЗАДАЧА:\n"
+                f"1. Дай конкретные рекомендации по очистке текстовых данных\n"
+                f"2. Объясни, почему эта стратегия лучше всего подходит для данной задачи\n"
+                f"3. Укажи возможные риски выбранного подхода\n"
+                f"4. Предложи альтернативный вариант\n\n"
+                f"Используй маркированные списки. Ограничь ответ 400 словами."
+            )
+
+            response = self.llm_client.messages.create(
+                model=self.model,
+                max_tokens=800,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}]
+            )
+
+            recommendation = response.content[0].text
+
             print("\n" + "="*60)
-            print("🤖 РЕКОМЕНДАЦИЯ LLM ПО ОЧИСТКЕ ТЕКСТОВЫХ ДАННЫХ:")
+            print("🤖 РЕКОМЕНДАЦИЯ CLAUDE ПО ОЧИСТКЕ ТЕКСТОВЫХ ДАННЫХ:")
             print("="*60)
             print(recommendation)
-            
+
             return recommendation
-            
+
         except Exception as e:
-            error_msg = f"❌ Ошибка при обращении к OpenAI: {str(e)}"
+            error_msg = f"❌ Ошибка при обращении к Claude API: {str(e)}"
             print(error_msg)
             return error_msg
     
     def recommend_strategy_from_llm(self, task_description: str) -> Dict[str, str]:
         """
-        Получает от LLM конкретную стратегию в формате словаря.
-        
+        Получает от Claude конкретную стратегию очистки в формате словаря.
+
         Parameters:
         -----------
         task_description : str
             Описание ML-задачи
-            
+
         Returns:
         --------
         Dict[str, str] : Словарь со стратегией
         """
-        if not self.use_llm or not self.quality_report:
-            return {
-                'missing': 'fill_placeholder',
-                'duplicates': 'drop',
-                'outliers': 'flag',
-                'text_cleaning': 'advanced'
-            }
-        
-        try:
-            prompt = f"""На основе отчета о качестве текстовых данных и описания задачи, 
-            верни ТОЛЬКО JSON со стратегией очистки в формате:
-            {{"missing": "стратегия", "duplicates": "стратегия", "outliers": "стратегия", "text_cleaning": "стратегия"}}
+        default_strategy = {
+            'missing': 'fill_placeholder',
+            'duplicates': 'drop',
+            'outliers': 'flag',
+            'text_cleaning': 'advanced'
+        }
 
-            Отчет: {self.quality_report}
-            Задача: {task_description}
-            
-            Доступные стратегии:
-            - missing: fill_empty, fill_placeholder, fill_mode, drop
-            - duplicates: drop, keep_first, keep_last
-            - outliers: truncate, remove, flag
-            - text_cleaning: basic, advanced
-            
-            Верни только JSON, без пояснений."""
-            
-            response = self.llm_client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=150
+        if not self.use_llm or not self.quality_report:
+            return default_strategy
+
+        try:
+            prompt = (
+                f"На основе отчёта о качестве текстовых данных и описания задачи "
+                f"верни ТОЛЬКО JSON со стратегией очистки в формате: "
+                f'{{ "missing": "стратегия", "duplicates": "стратегия", "outliers": "стратегия", "text_cleaning": "стратегия" }}\n\n'
+                f"Отчёт: {self.quality_report}\n"
+                f"Задача: {task_description}\n\n"
+                f"Доступные стратегии:\n"
+                f"- missing: fill_empty, fill_placeholder, fill_mode, drop\n"
+                f"- duplicates: drop, keep_first, keep_last\n"
+                f"- outliers: truncate, remove, flag\n"
+                f"- text_cleaning: basic, advanced\n\n"
+                f"Верни только JSON, без пояснений."
             )
-            
-            import json
-            # Извлекаем JSON из ответа
-            content = response.choices[0].message.content
-            # Находим JSON в строке
+
+            response = self.llm_client.messages.create(
+                model=self.model,
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            content = response.content[0].text
             json_start = content.find('{')
             json_end = content.rfind('}') + 1
-            if json_start != -1 and json_end != -1:
-                json_str = content[json_start:json_end]
-                strategy = json.loads(json_str)
+            if json_start != -1 and json_end > json_start:
+                strategy = json.loads(content[json_start:json_end])
                 return strategy
             else:
-                raise ValueError("JSON не найден в ответе")
-            
+                raise ValueError("JSON не найден в ответе Claude")
+
         except Exception as e:
-            print(f"⚠️ Ошибка при получении стратегии от LLM: {e}")
-            # Возвращаем стратегию по умолчанию
-            return {
-                'missing': 'fill_placeholder',
-                'duplicates': 'drop',
-                'outliers': 'flag',
-                'text_cleaning': 'advanced'
-            }
+            print(f"⚠️ Ошибка при получении стратегии от Claude: {e}")
+            return default_strategy
 
 
     def run(self): 
@@ -1020,38 +1004,33 @@ class DataQualityAgent:
         plt.show()
         
         print("\n" + "="*80)
-        print("БОНУС: LLM-СОВЕТНИК ДЛЯ ТЕКСТОВЫХ ДАННЫХ")
+        print("БОНУС: LLM-СОВЕТНИК CLAUDE ДЛЯ ТЕКСТОВЫХ ДАННЫХ")
         print("="*80)
 
         # Проверяем наличие API ключа
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
 
         if api_key:
-            print("✅ API ключ найден, подключаю LLM-советника...")
-            
+            print("✅ ANTHROPIC_API_KEY найден, подключаю Claude-советника...")
+
             try:
                 # Создаем агента с LLM
-                agent_with_llm = DataQualityAgent(use_llm=True, api_key=api_key, model="gpt-3.5-turbo")
+                agent_with_llm = DataQualityAgent(use_llm=True, api_key=api_key, model="claude-opus-4-6")
                 
                 # Описание NLP-задачи
-                task_description = """
-                Задача: Классификация текстов по категориям (positive, negative, neutral).
-                
-                Особенности:
-                - Сильный дисбаланс классов: neutral составляет ~70-80% данных
-                - Важно сохранить редкие классы (positive, negative) для качественного обучения
-                - Тексты могут содержать URL, email, специальные символы, избыточные пробелы
-                - Есть пропуски (5%) и дубликаты (около 5% от данных)
-                - Некоторые тексты аномально короткие (<10 символов) или длинные (>500 символов)
-                
-                Требования:
-                - Максимально сохранить данные для редких классов
-                - Улучшить качество признаков для NLP-модели (BERT/RoBERTa)
-                - Добавить метаинформацию о качестве текста как дополнительные признаки
-                - Сохранить важную информацию (эмодзи для тональности, если есть)
-                
-                Бизнес-метрики: F1-score на редких классах (positive, negative)
-                """
+                task_description = (
+                    "Задача: Классификация статей нормативно-правовых актов РФ по кодексам (НК РФ, ГК РФ, УК РФ и др.). "
+                    "Особенности: "
+                    "Сильный дисбаланс классов — 'Отдельный нормативно-правовой акт' доминирует. "
+                    "Тексты содержат служебные метки ('Информация об изменениях', 'См. комментарии'), номера законов, даты. "
+                    "Аномально длинные тексты у 'Отдельный НПА', короткие у некоторых статей ГК/СК РФ. "
+                    "Есть дубликаты заголовков статей в начале текста. "
+                    "Требования: "
+                    "Сохранить юридически значимый текст статей. "
+                    "Не удалять номера статей и ссылки на законы — они несут смысловую нагрузку. "
+                    "Улучшить качество признаков для классификатора (BERT/ruBERT). "
+                    "Бизнес-метрика: macro F1-score по всем кодексам."
+                )
                 
                 # Получаем конкретную стратегию
                 print("\n📋 Получаю конкретную стратегию от LLM...")
@@ -1068,11 +1047,11 @@ class DataQualityAgent:
                 print(comparison_llm)
                 
             except Exception as e:
-                print(f"⚠️ Ошибка при работе с LLM: {e}")
+                print(f"⚠️ Ошибка при работе с Claude: {e}")
                 print("Продолжаю без LLM-советника...")
         else:
-            print("⚠️ API ключ OpenAI не найден. LLM-советник недоступен.")
-            print("Для использования LLM установите переменную окружения OPENAI_API_KEY")
+            print("⚠️ ANTHROPIC_API_KEY не найден. Claude-советник недоступен.")
+            print("Для использования LLM установите переменную окружения ANTHROPIC_API_KEY")
 
         # ============================================
         # ИТОГОВЫЙ ОТЧЕТ
