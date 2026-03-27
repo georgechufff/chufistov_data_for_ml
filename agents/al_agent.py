@@ -12,11 +12,13 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+import joblib
 import warnings
 import os
 import glob
 from datetime import datetime
 import json
+import pickle
 
 warnings.filterwarnings('ignore')
 
@@ -522,8 +524,14 @@ class ActiveLearningAgent:
                 print(f"\n📊 Распределение классов:")
                 for label, count in current_labeled[label_column].value_counts().items():
                     print(f"  • {label}: {count} ({count/len(current_labeled)*100:.1f}%)")
-        
+
         self.training_history = history
+
+        # Сохраняем модель в конце цикла
+        model_filename = f"al_model_{strategy}_iter{n_iterations}.joblib"
+        model_path = os.path.join('data/pipeline', model_filename)
+        # self.save_model(model_path)
+
         return history
     
     def report(self, history: List[TrainingMetrics], 
@@ -723,9 +731,77 @@ class ActiveLearningAgent:
                 'Улучшение': f"{last.accuracy - first.accuracy:+.4f}",
                 'Финальный F1': f"{last.f1:.4f}"
             })
-        
+
         comparison_df = pd.DataFrame(final_results)
         print(comparison_df.to_string(index=False))
+
+    def save_model(self, filepath: str = "data/pipeline/al_model.joblib") -> str:
+        """
+        Сохраняет обученные компоненты модели в файл.
+
+        Parameters:
+        -----------
+        filepath : str
+            Путь для сохранения модели (по умолчанию: data/pipeline/al_model.joblib)
+
+        Returns:
+        --------
+        str : Полный путь до сохраненного файла
+        """
+        # Создаем директорию если её нет
+        os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
+
+        # Сохраняем компоненты модели (не весь объект)
+        model_data = {
+            'model': self.model,
+            'vectorizer': self.vectorizer,
+            'label_encoder': self.label_encoder,
+            'classes': self.classes_ if hasattr(self, 'classes_') else None,
+            'feature_names': self.feature_names,
+            'model_type': self.model_type,
+            'vectorizer_type': self.vectorizer_type,
+            'random_state': self.random_state,
+            'training_history': self.training_history
+        }
+
+        joblib.dump(model_data, filepath, compress=3)
+
+        print(f"\n✅ Модель сохранена в {filepath}")
+        return filepath
+
+    @staticmethod
+    def load_model(filepath: str) -> 'ActiveLearningAgent':
+        """
+        Загружает обученную модель из файла и восстанавливает агента.
+
+        Parameters:
+        -----------
+        filepath : str
+            Путь до файла с моделью
+
+        Returns:
+        --------
+        ActiveLearningAgent : Загруженная модель
+        """
+        model_data = joblib.load(filepath)
+
+        # Создаем новый агент с сохраненными параметрами
+        agent = ActiveLearningAgent(
+            model_type=model_data['model_type'],
+            vectorizer=model_data['vectorizer_type'],
+            random_state=model_data['random_state']
+        )
+
+        # Восстанавливаем компоненты
+        agent.model = model_data['model']
+        agent.vectorizer = model_data['vectorizer']
+        agent.label_encoder = model_data['label_encoder']
+        agent.classes_ = model_data['classes']
+        agent.feature_names = model_data['feature_names']
+        agent.training_history = model_data['training_history']
+
+        print(f"\n✅ Модель загружена из {filepath}")
+        return agent
 
 
 # Функция для создания реального датасета из CSV
